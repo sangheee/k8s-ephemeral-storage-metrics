@@ -83,8 +83,10 @@ func getMetrics() {
 		[]string{
 			// name of pod for Ephemeral Storage
 			"pod_name",
-			// Name of Node where pod is placed.
+			// name of Node where pod is placed.
 			"node_name",
+			// name of namespace where pod is placed.
+			"namespace",
 		},
 	)
 
