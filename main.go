@@ -105,6 +105,14 @@ func getMetrics() {
 		nodeName := raw["node"].(map[string]interface{})["nodeName"].(string)
 		for _, element := range raw["pods"].([]interface{}) {
 
+			// A pod that has just been created may not have a field below.
+			if _, ok := element.(map[string]interface{})["podRef"]; !ok {
+				continue
+			}
+			if _, ok := element.(map[string]interface{})["ephemeral-storage"]; !ok {
+				continue
+			}
+
 			podName := element.(map[string]interface{})["podRef"].(map[string]interface{})["name"].(string)
 			usedBytes := element.(map[string]interface{})["ephemeral-storage"].(map[string]interface{})["usedBytes"].(float64)
 
