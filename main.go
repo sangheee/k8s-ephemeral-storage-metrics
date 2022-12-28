@@ -86,7 +86,7 @@ func getMetrics() {
 			// name of Node where pod is placed.
 			"node_name",
 			// name of namespace where pod is placed.
-			"namespace",
+			"namespace_name",
 		},
 	)
 
