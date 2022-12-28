@@ -114,11 +114,12 @@ func getMetrics() {
 			}
 
 			podName := element.(map[string]interface{})["podRef"].(map[string]interface{})["name"].(string)
+			namespaceName := element.(map[string]interface{})["podRef"].(map[string]interface{})["namespace"].(string)
 			usedBytes := element.(map[string]interface{})["ephemeral-storage"].(map[string]interface{})["usedBytes"].(float64)
 
-			opsQueued.With(prometheus.Labels{"pod_name": podName, "node_name": nodeName}).Set(usedBytes)
+			opsQueued.With(prometheus.Labels{"pod_name": podName, , "namespace_name": namespaceName, "node_name": nodeName}).Set(usedBytes)
 
-			log.Debug().Msg(fmt.Sprintf("pod %s on %s with usedBytes: %s", podName, nodeName, usedBytes))
+			log.Debug().Msg(fmt.Sprintf("pod %s on %s with usedBytes: %s", podName, nodeName, namespaceName, usedBytes))
 		}
 
 		time.Sleep(15 * time.Second)
