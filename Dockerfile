@@ -10,7 +10,7 @@ RUN go mod download
 
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o app main.go
 
-FROM gcr.io/distroless/static:nonroot
+FROM reg.navercorp.com/base/alpine:3.14
 WORKDIR /
 COPY --from=builder /code/app .
 USER 65532:65532
