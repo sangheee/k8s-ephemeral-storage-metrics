@@ -148,8 +148,6 @@ func getMetrics() {
 			ephemeralStorageMetricsExist[labels] = false
 		}
 
-		opsQueued.Delete(prometheus.Labels{"node_name": currentNode})
-
 		time.Sleep(15 * time.Second)
 	}
 }
