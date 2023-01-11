@@ -94,6 +94,8 @@ func getMetrics() {
 
 	log.Debug().Msg(fmt.Sprintf("getMetrics has been invoked"))
 	currentNode = getEnv("CURRENT_NODE_NAME", "")
+
+	var ephemeralStorageMetricsExist = make(map[prometheus.Labels]bool)
 	for {
 		content, err := clientset.RESTClient().Get().AbsPath(fmt.Sprintf("/api/v1/nodes/%s/proxy/stats/summary", currentNode)).DoRaw(context.Background())
 		if err != nil {
@@ -119,10 +121,23 @@ func getMetrics() {
 			namespaceName := element.(map[string]interface{})["podRef"].(map[string]interface{})["namespace"].(string)
 			usedBytes := element.(map[string]interface{})["ephemeral-storage"].(map[string]interface{})["usedBytes"].(float64)
 
-			opsQueued.With(prometheus.Labels{"pod_name": podName, "namespace_name": namespaceName, "node_name": nodeName}).Set(usedBytes)
+			labels := prometheus.Labels{"pod_name": podName, "namespace_name": namespaceName, "node_name": nodeName}
+			ephemeralStorageMetricsExist[labels] = true
+			opsQueued.With(labels).Set(usedBytes)
 
 			log.Debug().Msg(fmt.Sprintf("pod %s on %s with usedBytes: %s", podName, nodeName, namespaceName, usedBytes))
 		}
+
+		for labels, exist := range ephemeralStorageMetricsExist {
+			if !exist {
+				opsQueued.Delete(labels)
+				delete(ephemeralStorageMetricsExist, labels)
+				continue
+			}
+			ephemeralStorageMetricsExist[labels] = false
+		}
+
+		opsQueued.Delete(prometheus.Labels{"node_name": currentNode})
 
 		time.Sleep(15 * time.Second)
 	}
