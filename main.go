@@ -24,6 +24,12 @@ var inCluster string
 var clientset *kubernetes.Clientset
 var currentNode string
 
+type EphemeralStoragePodUsageLabels struct {
+	pod_name       string
+	node_name      string
+	namespace_name string
+}
+
 func getEnv(key, fallback string) string {
 	if value, ok := os.LookupEnv(key); ok {
 		return value
@@ -95,7 +101,7 @@ func getMetrics() {
 	log.Debug().Msg(fmt.Sprintf("getMetrics has been invoked"))
 	currentNode = getEnv("CURRENT_NODE_NAME", "")
 
-	var ephemeralStorageMetricsExist = make(map[prometheus.Labels]bool)
+	var ephemeralStorageMetricsExist = make(map[EphemeralStoragePodUsageLabels]bool)
 	for {
 		content, err := clientset.RESTClient().Get().AbsPath(fmt.Sprintf("/api/v1/nodes/%s/proxy/stats/summary", currentNode)).DoRaw(context.Background())
 		if err != nil {
@@ -121,16 +127,21 @@ func getMetrics() {
 			namespaceName := element.(map[string]interface{})["podRef"].(map[string]interface{})["namespace"].(string)
 			usedBytes := element.(map[string]interface{})["ephemeral-storage"].(map[string]interface{})["usedBytes"].(float64)
 
-			labels := prometheus.Labels{"pod_name": podName, "namespace_name": namespaceName, "node_name": nodeName}
-			ephemeralStorageMetricsExist[labels] = true
-			opsQueued.With(labels).Set(usedBytes)
+			ephemeralStoragePodUsageLabels := EphemeralStoragePodUsageLabels{
+				pod_name:       podName,
+				node_name:      nodeName,
+				namespace_name: namespaceName,
+			}
+
+			ephemeralStorageMetricsExist[ephemeralStoragePodUsageLabels] = true
+			opsQueued.With(prometheus.Labels{"pod_name": podName, "namespace_name": namespaceName, "node_name": nodeName}).Set(usedBytes)
 
 			log.Debug().Msg(fmt.Sprintf("pod %s on %s with usedBytes: %s", podName, nodeName, namespaceName, usedBytes))
 		}
 
 		for labels, exist := range ephemeralStorageMetricsExist {
 			if !exist {
-				opsQueued.Delete(labels)
+				opsQueued.Delete(prometheus.Labels{"pod_name": labels.pod_name, "namespace_name": labels.namespace_name, "node_name": labels.node_name})
 				delete(ephemeralStorageMetricsExist, labels)
 				continue
 			}
