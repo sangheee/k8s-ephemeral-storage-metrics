@@ -2,188 +2,97 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
-	"k8s.io/client-go/util/homedir"
 	"net/http"
 	"os"
-	"path/filepath"
-	"runtime"
+	"os/signal"
+	"strconv"
+	"syscall"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/klog/v2"
+	"sigs.k8s.io/controller-runtime/pkg/client/config"
 )
 
-var inCluster string
-var clientset *kubernetes.Clientset
-var currentNode string
-
-type EphemeralStoragePodUsageLabels struct {
-	pod_name       string
-	node_name      string
-	namespace_name string
-}
-
-func getEnv(key, fallback string) string {
-	if value, ok := os.LookupEnv(key); ok {
-		return value
-	}
-	return fallback
-}
-
-func getK8sClient() {
-	inCluster = getEnv("IN_CLUSTER", "true")
-
-	if inCluster == "true" {
-
-		config, err := rest.InClusterConfig()
-		if err != nil {
-			log.Error().Msg("Failed to get rest config for in cluster client")
-			panic(err.Error())
-		}
-		// creates the clientset
-		clientset, err = kubernetes.NewForConfig(config)
-		if err != nil {
-			log.Error().Msg("Failed to get client set for in cluster client")
-			panic(err.Error())
-		}
-		log.Debug().Msg("Successful got the in cluster client")
-
-	} else {
-
-		var kubeconfig *string
-		if home := homedir.HomeDir(); home != "" {
-			kubeconfig = flag.String("kubeconfig", filepath.Join(home, ".kube", "config"), "(optional) absolute path to the kubeconfig file")
-		} else {
-			kubeconfig = flag.String("kubeconfig", "", "absolute path to the kubeconfig file")
-		}
-		flag.Parse()
-
-		// use the current context in kubeconfig
-		config, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
-		if err != nil {
-			panic(err.Error())
-		}
-
-		// create the clientset
-		clientset, err = kubernetes.NewForConfig(config)
-		if err != nil {
-			panic(err.Error())
-		}
-
-	}
-}
-
-func getMetrics() {
-
-	opsQueued := prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Name: "ephemeral_storage_pod_usage",
-		Help: "Used to expose Ephemeral Storage metrics for pod ",
-	},
-		[]string{
-			// name of pod for Ephemeral Storage
-			"pod_name",
-			// name of Node where pod is placed.
-			"node_name",
-			// name of namespace where pod is placed.
-			"namespace_name",
-		},
-	)
-
-	prometheus.MustRegister(opsQueued)
-
-	log.Debug().Msg(fmt.Sprintf("getMetrics has been invoked"))
-	currentNode = getEnv("CURRENT_NODE_NAME", "")
-
-	var ephemeralStorageMetricsExist = make(map[EphemeralStoragePodUsageLabels]bool)
-	for {
-		content, err := clientset.RESTClient().Get().AbsPath(fmt.Sprintf("/api/v1/nodes/%s/proxy/stats/summary", currentNode)).DoRaw(context.Background())
-		if err != nil {
-			log.Error().Msg(fmt.Sprintf("ErrorBadRequst : %s\n", err.Error()))
-			os.Exit(1)
-		}
-		log.Debug().Msg(fmt.Sprintf("Fetched proxy stats from node : %s", currentNode))
-		var raw map[string]interface{}
-		_ = json.Unmarshal(content, &raw)
-
-		nodeName := raw["node"].(map[string]interface{})["nodeName"].(string)
-		for _, element := range raw["pods"].([]interface{}) {
-
-			// A pod that has just been created may not have a field below.
-			if _, ok := element.(map[string]interface{})["podRef"]; !ok {
-				continue
-			}
-			if _, ok := element.(map[string]interface{})["ephemeral-storage"]; !ok {
-				continue
-			}
-
-			podName := element.(map[string]interface{})["podRef"].(map[string]interface{})["name"].(string)
-			namespaceName := element.(map[string]interface{})["podRef"].(map[string]interface{})["namespace"].(string)
-			usedBytes := element.(map[string]interface{})["ephemeral-storage"].(map[string]interface{})["usedBytes"].(float64)
-
-			ephemeralStoragePodUsageLabels := EphemeralStoragePodUsageLabels{
-				pod_name:       podName,
-				node_name:      nodeName,
-				namespace_name: namespaceName,
-			}
-
-			ephemeralStorageMetricsExist[ephemeralStoragePodUsageLabels] = true
-			opsQueued.With(prometheus.Labels{"pod_name": podName, "namespace_name": namespaceName, "node_name": nodeName}).Set(usedBytes)
-
-			log.Debug().Msg(fmt.Sprintf("pod %s on %s with usedBytes: %s", podName, nodeName, namespaceName, usedBytes))
-		}
-
-		for labels, exist := range ephemeralStorageMetricsExist {
-			if !exist {
-				opsQueued.Delete(prometheus.Labels{"pod_name": labels.pod_name, "namespace_name": labels.namespace_name, "node_name": labels.node_name})
-				delete(ephemeralStorageMetricsExist, labels)
-				continue
-			}
-			ephemeralStorageMetricsExist[labels] = false
-		}
-
-		time.Sleep(15 * time.Second)
-	}
-}
-
-type LineInfoHook struct{}
-
-func (h LineInfoHook) Run(e *zerolog.Event, l zerolog.Level, msg string) {
-	_, file, line, ok := runtime.Caller(0)
-	if ok {
-		e.Str("line", fmt.Sprintf("%s:%d", file, line))
-	}
-}
-
-func setLogger() {
-	logLevel := getEnv("LOG_LEVEL", "info")
-	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
-	level, err := zerolog.ParseLevel(logLevel)
-	if err != nil {
-		panic(err.Error())
-	}
-	zerolog.SetGlobalLevel(level)
-	log.Hook(LineInfoHook{})
-
-}
+var (
+	listenAddress        string
+	scrapeIntervalSecond int64
+	metricsPath          string
+	verbosityLogLevel    string
+)
 
 func main() {
+	flag.Int64Var(&scrapeIntervalSecond, "scrape-interval", int64FromEnv("SCRAPE_INTERVAL_SECOND", 15), "Metrics scraping interval")
+	flag.StringVar(&listenAddress, "listen-address", ":9100", "Address on which to expose metrics and web interface.")
+	flag.StringVar(&metricsPath, "metrics-path", "/metrics", "Path under which to expose metrics.")
+	flag.StringVar(&verbosityLogLevel, "log.verbosity", "0", "Verbosity log level")
+
 	flag.Parse()
-	setLogger()
-	getK8sClient()
-	go getMetrics()
-	port := getEnv("METRICS_PORT", "9100")
-	http.Handle("/metrics", promhttp.Handler())
-	err := http.ListenAndServe(fmt.Sprintf(":%s", port), nil)
+
+	klog.InitFlags(flag.CommandLine)
+	err := flag.Set("v", verbosityLogLevel)
 	if err != nil {
-		log.Error().Msg(fmt.Sprintf("Listener Falied : %s\n", err.Error()))
+		klog.Errorf("error on setting v to %s: %v", verbosityLogLevel, err)
+	}
+	defer klog.Flush()
+
+	klog.Info("Starting ephemeral-storage-exporter")
+	// Use the clientcmd library to load the Kubernetes client configuration
+	cfg, err := config.GetConfig()
+	if err != nil {
+		panic(fmt.Errorf("failed to create Kubernetes client config: %v", err))
+	}
+	// create the clientset
+	clientset, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
 		panic(err.Error())
 	}
 
+	manager := NewManager(clientset, time.Duration(scrapeIntervalSecond)*time.Second)
+	// Start the manager.
+	if err := manager.Start(); err != nil {
+		klog.Fatalf("Failed to start manager: %v", err)
+	}
+	defer func() {
+		if err := manager.Stop(); err != nil {
+			klog.Errorf("Failed to stop container manager: %v", err)
+		}
+	}()
+
+	prometheus.MustRegister(newEphemeralStorageCollector(manager))
+	http.Handle(metricsPath, promhttp.Handler())
+
+	srv := &http.Server{Addr: listenAddress}
+	stopCh := make(chan os.Signal, 1)
+	signal.Notify(stopCh, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
+
+	// Block until a signal is received.
+	go func() {
+		sig := <-stopCh
+		klog.Infof("Exiting given signal: %v", sig)
+		if err := srv.Shutdown(context.Background()); err != nil {
+			klog.ErrorS(err, "failed to shutdown server")
+		}
+	}()
+
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		klog.ErrorS(err, "error starting HTTP server")
+	}
+}
+
+func int64FromEnv(env string, defaultValue int64) int64 {
+	str, ok := os.LookupEnv(env)
+	if !ok {
+		return defaultValue
+	}
+
+	num, err := strconv.ParseInt(str, 10, 64)
+	if err != nil {
+		return defaultValue
+	}
+	return num
 }
