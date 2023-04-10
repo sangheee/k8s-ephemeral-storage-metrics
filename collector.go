@@ -75,9 +75,10 @@ func (m *manager) Start() error {
 			}
 			start := time.Now()
 
-			content, err := m.cli.RESTClient().Get().AbsPath(fmt.Sprintf("/api/v1/nodes/%s/proxy/stats/summary", m.node)).DoRaw(context.Background())
+			req := m.cli.RESTClient().Get().AbsPath(fmt.Sprintf("/api/v1/nodes/%s/proxy/stats/summary", m.node))
+			content, err := req.DoRaw(context.Background())
 			if err != nil {
-				klog.Error(err)
+				klog.ErrorS(err, "Failed to request api server", "request", req, "content", content)
 			}
 			klog.V(4).Info("Fetched proxy stats from node : %s", m.node)
 
@@ -141,7 +142,9 @@ func (m *manager) RecentStats() []podEphemeralStorageStat {
 
 	var ret []podEphemeralStorageStat
 	for _, stat := range m.podEphemeralStorageStats {
-		ret = append(ret, *stat)
+		if stat != nil {
+			ret = append(ret, *stat)
+		}
 	}
 	return ret
 }
