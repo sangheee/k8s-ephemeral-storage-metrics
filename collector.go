@@ -90,14 +90,16 @@ func (m *manager) Start() error {
 
 			for _, podStat := range raw.Pods {
 				// A pod that has just been created may not have a field below.
-				podRef := podStat.PodRef
-				ephemeralStorageStat := podStat.EphemeralStorage
-				podEphemeralStorageStats = append(podEphemeralStorageStats, &podEphemeralStorageStat{
-					namespace: podRef.Namespace,
-					nodeName:  nodeName,
-					podName:   podRef.Name,
-					FsStats:   ephemeralStorageStat,
-				})
+				if podStat.EphemeralStorage != nil {
+					podRef := podStat.PodRef
+					ephemeralStorageStat := podStat.EphemeralStorage
+					podEphemeralStorageStats = append(podEphemeralStorageStats, &podEphemeralStorageStat{
+						namespace: podRef.Namespace,
+						nodeName:  nodeName,
+						podName:   podRef.Name,
+						FsStats:   ephemeralStorageStat,
+					})
+				}
 			}
 
 			func() {
@@ -142,9 +144,7 @@ func (m *manager) RecentStats() []podEphemeralStorageStat {
 
 	var ret []podEphemeralStorageStat
 	for _, stat := range m.podEphemeralStorageStats {
-		if stat != nil {
-			ret = append(ret, *stat)
-		}
+		ret = append(ret, *stat)
 	}
 	return ret
 }
@@ -184,6 +184,9 @@ func newEphemeralStorageCollector(manager *manager) *ephemeralStorageCollector {
 				help:      "Used bytes to expose Ephemeral Storage metrics for pod",
 				valueType: prometheus.GaugeValue,
 				getValue: func(stats *stats.FsStats) float64 {
+					if stats.UsedBytes == nil {
+						return 0
+					}
 					return float64(*stats.UsedBytes)
 				},
 			},
@@ -192,6 +195,9 @@ func newEphemeralStorageCollector(manager *manager) *ephemeralStorageCollector {
 				help:      "Available bytes of ephemeral storage",
 				valueType: prometheus.GaugeValue,
 				getValue: func(stats *stats.FsStats) float64 {
+					if stats.AvailableBytes == nil {
+						return 0
+					}
 					return float64(*stats.AvailableBytes)
 				},
 			},
@@ -200,6 +206,9 @@ func newEphemeralStorageCollector(manager *manager) *ephemeralStorageCollector {
 				help:      "Capacity bytes of pod ephemeral storage",
 				valueType: prometheus.GaugeValue,
 				getValue: func(stats *stats.FsStats) float64 {
+					if stats.CapacityBytes == nil {
+						return 0
+					}
 					return float64(*stats.CapacityBytes)
 				},
 			},
