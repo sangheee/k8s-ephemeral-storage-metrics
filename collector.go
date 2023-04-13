@@ -190,28 +190,6 @@ func newEphemeralStorageCollector(manager *manager) *ephemeralStorageCollector {
 					return float64(*stats.UsedBytes)
 				},
 			},
-			{
-				name:      "ephemeral_storage_pod_available_bytes",
-				help:      "Available bytes of ephemeral storage",
-				valueType: prometheus.GaugeValue,
-				getValue: func(stats *stats.FsStats) float64 {
-					if stats.AvailableBytes == nil {
-						return 0
-					}
-					return float64(*stats.AvailableBytes)
-				},
-			},
-			{
-				name:      "ephemeral_storage_pod_capacity_bytes",
-				help:      "Capacity bytes of pod ephemeral storage",
-				valueType: prometheus.GaugeValue,
-				getValue: func(stats *stats.FsStats) float64 {
-					if stats.CapacityBytes == nil {
-						return 0
-					}
-					return float64(*stats.CapacityBytes)
-				},
-			},
 		},
 	}
 }
